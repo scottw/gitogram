@@ -1,0 +1,109 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+## Scott Wiersdorf
+## Created: Thu Aug 29 14:03:44 MDT 2013
+
+## parse `git log --pretty=medium` output and display a commit
+## histogram
+
+use Getopt::Long;
+use Time::Piece;
+use POSIX ();
+
+my %opt = (group => 'hour',
+           width => 70);
+
+GetOptions(\%opt,
+           'author=s',
+           'group=s',
+           'until=s',
+           'width=i',
+           'gmtime',
+           'debug',
+           'help')
+  or usage();
+
+unless ($opt{group} =~ /^(?:year|mon|mday|wday|hour)$/) {
+    usage();
+}
+
+usage() if $opt{help};
+
+$opt{author} &&= qr/^Author: $opt{author}/im;
+
+local $/ = "\ncommit ";
+
+my %group = ();
+
+while( my $commit = <> ) {
+    last if $opt{until} and $commit =~ /\A(?:commit )?$opt{until}/;
+    next if $opt{author} and $commit !~ $opt{author};
+
+    my ($date) = $commit =~ /^Date:\s*(.+)/m;
+
+    print "DATE: $date\n" if $opt{debug};
+
+    my $t;
+    eval {
+        $t = Time::Piece->strptime($date,
+                                   "%a %b %e %T %Y %z");
+    };
+
+    if ($@) {
+        warn "$@\n";
+        next;
+    }
+
+    unless ($opt{gmtime}) {
+        $t = Time::Piece->new($t->epoch);
+    }
+
+    my $sub = $opt{group};
+    $group{$t->$sub}++;
+
+    print "TIME: " . $t->strftime . "\n\n" if $opt{debug};
+}
+
+## first pass: set formatting rules
+my $max_key = 0;
+my $max_val = 0;
+for my $key ( keys %group ) {
+    $max_key = length($key) if length($key) > $max_key;
+    $max_val = $group{$key} if $group{$key} > $max_val;
+}
+
+## formatting
+my $fmt = "%${max_key}s: %s (%d)\n";
+my $div = $max_val/$opt{width};
+
+## second pass: sorted output
+for my $key ( sort { $a <=> $b } keys %group ) {
+    my $ticks = ($group{$key} ? int($group{$key}/$div) : 0);
+
+    printf($fmt, $key, ('#' x $ticks), $group{$key});
+}
+
+exit;
+
+sub usage {
+    die <<_USAGE_;
+usage: git log | gitogram [--author=(pattern)] [--group=year|mon|mday|wday|hour] \
+                          [--until=(commit|date)] [--width=70] [--gmtime]
+
+  --author         only show commits by the given author
+
+  --group          group entries; defaults to 'hour'
+
+  --until          stop parsing the input when you get to the supplied commit
+                   (date not implemented)
+
+  --width          how many columns to print the histogram
+
+  --gmtime         parse dates in GMT (defaults to localtime)
+
+_USAGE_
+}
+
+__END__
